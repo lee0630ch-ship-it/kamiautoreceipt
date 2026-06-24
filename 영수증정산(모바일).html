@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>모바일 영수증 정산기 (영구저장)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- ExcelJS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.3.0/exceljs.min.js"></script>
+    <!-- FileSaver -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <!-- LocalForage (IndexedDB를 쉽게 사용하기 위한 라이브러리) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; }
+        .log-container::-webkit-scrollbar { width: 6px; }
+        .log-container::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 10px; }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen pb-12">
+    <div class="max-w-md mx-auto bg-white min-h-screen shadow-lg">
+        <!-- Header -->
+        <header class="bg-blue-600 text-white p-4 shadow-md sticky top-0 z-10">
+            <h1 class="text-xl font-bold text-center">🧾 모바일 정산기 vWeb</h1>
+        </header>
+
+        <main class="p-4 space-y-6">
+            <!-- 1. API Key -->
+            <section class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                <h2 class="font-bold text-gray-700 mb-2">1. 구글 Gemini API 키</h2>
+                <input type="password" id="apiKey" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="API 키를 입력하세요">
+                <p class="text-xs text-gray-500 mt-2">* 한 번 입력하면 핸드폰에 자동 저장됩니다.</p>
+            </section>
+
+            <!-- 2. 영수증 업로드 -->
+            <section class="bg-gray-50 p-4 rounded-xl border border-gray-200 border-l-4 border-l-blue-500">
+                <div class="flex justify-between items-center mb-2">
+                    <h2 class="font-bold text-gray-700">2. 영수증 누적 추가 (안전 저장)</h2>
+                    <span class="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-full font-bold">자동 저장 중</span>
+                </div>
+                <label class="block w-full text-center bg-blue-50 text-blue-700 p-4 rounded-lg border-2 border-dashed border-blue-300 cursor-pointer active:bg-blue-200 transition">
+                    <span class="text-2xl mb-1 block">📸</span>
+                    <span class="font-semibold" id="fileCountText">사진 찍기 또는 파일 선택</span>
+                    <input type="file" id="fileInput" multiple accept="image/*, application/pdf" class="hidden">
+                </label>
+                <p class="text-xs text-gray-500 mt-2">💡 창을 강제로 닫아도 사진은 날아가지 않습니다!</p>
+                <!-- 추가된 영수증 목록이 보이는 곳 -->
+                <div id="fileListContainer" class="mt-3 max-h-48 overflow-y-auto space-y-2"></div>
+            </section>
+
+            <!-- 3. 기본 정보 -->
+            <section class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                <h2 class="font-bold text-gray-700 mb-2">3. 기본 출장 정보</h2>
+                <div class="flex gap-2 mb-2">
+                    <input type="text" id="author" placeholder="작성자" class="w-1/2 p-2 border rounded-lg text-sm">
+                    <input type="text" id="traveler" placeholder="출장인" class="w-1/2 p-2 border rounded-lg text-sm">
+                </div>
+                <input type="text" id="vehicle" placeholder="이용차량 (예: 자차, 법인차 등)" class="w-full p-2 border rounded-lg text-sm">
+            </section>
+
+            <!-- 4. 출장 목적 -->
+            <section class="bg-gray-50 p-4 rounded-xl border border-gray-200">
+                <h2 class="font-bold text-gray-700 mb-2">4. 출장목적 입력</h2>
+                <div class="space-y-3">
+                    <div class="flex gap-2">
+                        <input type="text" id="partner" placeholder="파트너사" class="w-1/2 p-2 border rounded-lg text-sm">
+                        <input type="text" id="company" placeholder="업체명" class="w-1/2 p-2 border rounded-lg text-sm">
+                    </div>
+                    <div class="flex gap-2">
+                        <input type="text" id="location" placeholder="소재지" class="w-1/2 p-2 border rounded-lg text-sm">
+                        <input type="text" id="equipment" placeholder="장비명" class="w-1/2 p-2 border rounded-lg text-sm">
+                    </div>
+                    <div class="flex gap-2">
+                        <select id="paid" class="w-1/3 p-2 border rounded-lg text-sm bg-white">
+                            <option value="무상">무상</option>
+                            <option value="유상">유상</option>
+                        </select>
+                        <input type="text" id="task" placeholder="업무내용" class="w-2/3 p-2 border rounded-lg text-sm">
+                    </div>
+                    <button id="addPurposeBtn" class="w-full bg-gray-200 text-gray-700 py-2 rounded-lg font-semibold active:bg-gray-300 transition">➕ 추가하기</button>
+                </div>
+                <ul id="purposeList" class="mt-3 text-sm text-gray-600 bg-white border rounded-lg p-2 min-h-[40px] empty:hidden divide-y"></ul>
+            </section>
+
+            <!-- 5. 로그 영역 -->
+            <section class="bg-gray-900 rounded-xl p-4 shadow-inner">
+                <div id="logArea" class="log-container h-40 overflow-y-auto text-xs text-green-400 font-mono space-y-1">
+                    <div>시스템 대기 중...</div>
+                </div>
+            </section>
+
+            <!-- 6. 실행 버튼 -->
+            <button id="startBtn" class="w-full bg-blue-600 text-white text-lg font-bold py-4 rounded-xl shadow-lg active:bg-blue-700 transition disabled:bg-gray-400 disabled:shadow-none">
+                🚀 정산 생성 및 공유하기
+            </button>
+        </main>
+    </div>
+
+    <!-- 커스텀 알림 모달 -->
+    <div id="alertModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50 px-4">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+            <h3 class="font-bold text-lg mb-2 text-gray-800" id="alertTitle">알림</h3>
+            <p class="text-gray-600 mb-6 text-sm break-keep" id="alertMessage">메시지 내용</p>
+            <button id="alertCloseBtn" class="w-full bg-blue-600 text-white py-3 rounded-lg font-bold">확인</button>
+        </div>
+    </div>
+
+    <script>
+        // State
+        const purposes = [];
+        let selectedFiles = []; // 객체 배열로 변경됨: { id, name, type, base64 }
+
+        // Elements
+        const els = {
+            apiKey: document.getElementById('apiKey'),
+            fileInput: document.getElementById('fileInput'),
+            fileCountText: document.getElementById('fileCountText'),
+            fileListContainer: document.getElementById('fileListContainer'),
+            author: document.getElementById('author'),
+            traveler: document.getElementById('traveler'),
+            vehicle: document.getElementById('vehicle'),
+            addPurposeBtn: document.getElementById('addPurposeBtn'),
+            purposeList: document.getElementById('purposeList'),
+            logArea: document.getElementById('logArea'),
+            startBtn: document.getElementById('startBtn'),
+            modal: document.getElementById('alertModal')
+        };
+
+        // Init: Load Saved Data (텍스트 및 영구저장된 영수증)
+        window.onload = async () => {
+            // 1. 텍스트 데이터 로드
+            const saved = JSON.parse(localStorage.getItem('receipt_app_config') || '{}');
+            if (saved.apiKey) els.apiKey.value = saved.apiKey;
+            if (saved.author) els.author.value = saved.author;
+            if (saved.traveler) els.traveler.value = saved.traveler;
+            if (saved.vehicle) els.vehicle.value = saved.vehicle;
+
+            // 2. IndexedDB 설정 (로컬포지)
+            localforage.config({ name: 'ReceiptAppDB', storeName: 'saved_receipts' });
+
+            // 3. 찍어뒀던 영수증 사진들 불러오기
+            try {
+                const storedFiles = await localforage.getItem('receipt_images');
+                if (storedFiles && storedFiles.length > 0) {
+                    selectedFiles = storedFiles;
+                    updateFileUI();
+                    addLog(`[복구 완료] 이전 접속 시 저장된 영수증 ${selectedFiles.length}장을 안전하게 불러왔습니다.`);
+                }
+            } catch (err) {
+                console.error("저장된 영수증 불러오기 실패:", err);
+            }
+        };
+
+        function saveConfig() {
+            const config = {
+                apiKey: els.apiKey.value.trim(),
+                author: els.author.value.trim(),
+                traveler: els.traveler.value.trim(),
+                vehicle: els.vehicle.value.trim()
+            };
+            localStorage.setItem('receipt_app_config', JSON.stringify(config));
+        }
+
+        // Alert Helper
+        function showAlert(title, message) {
+            document.getElementById('alertTitle').innerText = title;
+            document.getElementById('alertMessage').innerText = message;
+            els.modal.classList.remove('hidden');
+        }
+        document.getElementById('alertCloseBtn').onclick = () => els.modal.classList.add('hidden');
+
+        // Log Helper
+        function addLog(msg, isError = false) {
+            const div = document.createElement('div');
+            div.innerText = msg;
+            if (isError) div.className = 'text-red-400 font-bold';
+            els.logArea.appendChild(div);
+            els.logArea.scrollTop = els.logArea.scrollHeight;
+        }
+
+        // Convert File to Base64
+        function fileToBase64(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.readAsDataURL(file);
+                reader.onload = () => {
+                    let encoded = reader.result.toString().replace(/^data:(.*,)?/, '');
+                    if ((encoded.length % 4) > 0) encoded += '='.repeat(4 - (encoded.length % 4));
+                    resolve(encoded);
+                };
+                reader.onerror = error => reject(error);
+            });
+        }
+
+        // File Selection (데이터베이스 안전 저장 방식)
+        els.fileInput.addEventListener('change', async (e) => {
+            const newFiles = Array.from(e.target.files);
+            if (newFiles.length === 0) return;
+
+            els.fileInput.disabled = true;
+            addLog(`[안내] 사진을 데이터베이스에 안전하게 저장 중입니다...`);
+
+            try {
+                for (let file of newFiles) {
+                    const base64Str = await fileToBase64(file);
+                    selectedFiles.push({
+                        id: Date.now() + Math.random(),
+                        name: file.name || `영수증_${new Date().getTime()}.jpg`,
+                        type: file.type || 'image/jpeg',
+                        base64: base64Str
+                    });
+                }
+                
+                // IndexedDB에 전체 목록 덮어쓰기 (영구 저장)
+                await localforage.setItem('receipt_images', selectedFiles);
+                
+                updateFileUI();
+                els.fileInput.value = ''; 
+                addLog(`[성공] ${newFiles.length}개의 영수증이 기기에 영구 저장되었습니다!`);
+            } catch (err) {
+                addLog(`[오류] 파일 저장 중 문제가 발생했습니다: ${err.message}`, true);
+            } finally {
+                els.fileInput.disabled = false;
+            }
+        });
+
+        // 파일 목록 UI 업데이트
+        function updateFileUI() {
+            if (selectedFiles.length > 0) {
+                els.fileCountText.innerText = `총 ${selectedFiles.length}장 안전 보관 중 (터치하여 추가)`;
+            } else {
+                els.fileCountText.innerText = "사진 찍기 또는 파일 선택";
+            }
+
+            let html = '';
+            selectedFiles.forEach((fileObj, idx) => {
+                html += `
+                    <div class="flex justify-between items-center bg-white p-2 border rounded-lg text-sm shadow-sm">
+                        <span class="truncate w-3/4 text-gray-700 font-medium">📄 ${fileObj.name}</span>
+                        <button onclick="removeFile(${idx})" class="text-red-500 font-bold px-3 py-1 bg-red-50 rounded hover:bg-red-100">삭제</button>
+                    </div>
+                `;
+            });
+            els.fileListContainer.innerHTML = html;
+        }
+
+        // 개별 파일 삭제
+        window.removeFile = async function(idx) {
+            const removed = selectedFiles.splice(idx, 1);
+            // 삭제 후 DB 업데이트
+            await localforage.setItem('receipt_images', selectedFiles);
+            updateFileUI();
+            addLog(`[안내] 영수증 1장이 삭제되었습니다.`);
+        };
+
+        // Add Purpose
+        els.addPurposeBtn.addEventListener('click', () => {
+            const ids = ['partner', 'company', 'location', 'equipment', 'task'];
+            const vals = ids.map(id => document.getElementById(id).value.trim());
+            const paid = document.getElementById('paid').value;
+
+            if (vals.every(v => !v)) return;
+
+            const purposeStr = `${vals[0]}/${vals[1]}/${vals[2]}/${vals[3]}/${paid}(${vals[4]})`;
+            purposes.push(purposeStr);
+            
+            const li = document.createElement('li');
+            li.className = 'py-1 text-gray-700';
+            li.innerText = `${purposes.length}. ${purposeStr}`;
+            els.purposeList.appendChild(li);
+
+            ids.forEach(id => document.getElementById(id).value = '');
+            document.getElementById('paid').value = '무상';
+        });
+
+        // Call Gemini API
+        async function analyzeReceipt(fileBase64, mimeType, apiKey) {
+            const prompt = `
+            이 문서(이미지 또는 PDF)에는 한 개 이상의 영수증이 포함되어 있을 수 있습니다. 
+            인식 가능한 '모든' 영수증의 정보를 추출해서 반드시 JSON 배열(Array) 형식으로 답변해 주세요.
+            
+            각 영수증마다 다음 정보를 추출하세요:
+            1. date: 결제일자 (반드시 YYYY-MM-DD 형식으로 변환)
+            2. merchant: 상호명
+            3. amount: 총 결제 금액 (숫자만, 쉼표 없이)
+            4. category: 분류 (다음 규칙에 따라 정확히 하나만 선택)
+               - 규칙1: 상호명에 '야놀자', '여기어때', '놀유니버스', '모텔', '호텔' 등이 포함되면 "숙박비"
+               - 규칙2: 상호명에 '주유소', 'GS칼텍스', 'SK', 'S-OIL', 'HD현대' 등이 포함되면 "유대"
+               - 규칙3: 상호명에 '주차장', '톨게이트', '요금소', '하이패스' 등이 포함되면 "통행료,주차"
+               - 규칙4: 상호명에 'KTX', 'SRT', '기차', '고속버스', '코레일', '지하철', '택시' 등이 포함되면 "차비"
+               - 규칙5: 상호명에 'CU', 'GS25', '세븐일레븐', '이마트24', '편의점'이 포함되면 "식대"
+               - 규칙6: 일반 식당, 카페, 음식점 이름이면 "식대"
+               - 규칙7: 위 어디에도 해당하지 않으면 "기타"
+               
+            JSON 출력 예시 (반드시 배열 형태로 출력할 것):
+            [
+              {"date": "2023-10-25", "merchant": "하이패스", "amount": 4500, "category": "통행료,주차"}
+            ]`;
+
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            
+            const payload = {
+                contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: mimeType, data: fileBase64 } }] }],
+                generationConfig: { responseMimeType: "application/json" }
+            };
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error?.message || "API 요청 실패");
+            }
+
+            const result = await response.json();
+            const text = result.candidates[0].content.parts[0].text;
+            let data = JSON.parse(text);
+            return Array.isArray(data) ? data : [data];
+        }
+
+        // Generate Excel and Share
+        async function generateAndShareExcel(extractedData) {
+            const workbook = new ExcelJS.Workbook();
+            const sheet = workbook.addWorksheet('경비정산서');
+
+            // 컬럼 너비
+            sheet.columns = [
+                { width: 5 }, { width: 12 }, { width: 25 }, { width: 15 }, 
+                { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }
+            ];
+
+            const today = new Date();
+            
+            // 상단 양식
+            sheet.getCell('C2').value = '국내출장경비 정산서';
+            sheet.getCell('C2').font = { size: 16, bold: true };
+            
+            sheet.getCell('H6').value = '작성일자';
+            sheet.getCell('I6').value = `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}`;
+
+            // 기본 정보
+            sheet.getCell('B6').value = '작성자';
+            sheet.getCell('C6').value = els.author.value.trim();
+            sheet.getCell('B7').value = '출장인';
+            sheet.getCell('C7').value = els.traveler.value.trim();
+            sheet.getCell('G7').value = '이용차량';
+            sheet.getCell('H7').value = els.vehicle.value.trim();
+
+            // 날짜/요일 분석 (박수당 자동 계산 로직 적용)
+            let validDates = [];
+            extractedData.forEach(item => {
+                if(item.date) {
+                    const d = new Date(item.date);
+                    if(!isNaN(d)) validDates.push(d.getTime());
+                }
+            });
+
+            if(validDates.length > 0) {
+                const uniqueTimes = [...new Set(validDates)].sort((a,b) => a - b);
+                const uniqueDates = uniqueTimes.map(t => new Date(t));
+
+                let blocks = [];
+                let currentBlock = [uniqueDates[0]];
+
+                for(let i=1; i<uniqueDates.length; i++) {
+                    const diffDays = Math.round((uniqueDates[i] - uniqueDates[i-1]) / (1000 * 60 * 60 * 24));
+                    if(diffDays === 1) {
+                        currentBlock.push(uniqueDates[i]);
+                    } else {
+                        blocks.push(currentBlock);
+                        currentBlock = [uniqueDates[i]];
+                    }
+                }
+                blocks.push(currentBlock);
+
+                let totalNights = 0, totalDays = 0;
+                let weekdayNights = 0, weekendNights = 0;
+                let weekdayCont = 0, weekendCont = 0;
+                let periodStrings = [];
+
+                blocks.forEach(block => {
+                    const sDt = block[0];
+                    const eDt = block[block.length-1];
+                    const bNights = Math.round((eDt - sDt) / (1000 * 60 * 60 * 24));
+                    const bDays = bNights + 1;
+
+                    totalNights += bNights;
+                    totalDays += bDays;
+
+                    if(bNights === 0) {
+                        periodStrings.push(`${sDt.getMonth()+1}/${sDt.getDate()}`);
+                    } else {
+                        periodStrings.push(`${sDt.getMonth()+1}/${sDt.getDate()}~${eDt.getMonth()+1}/${eDt.getDate()}`);
+                        
+                        let wkdayN = 0, wkendN = 0;
+                        for(let n=0; n<bNights; n++) {
+                            const night = new Date(sDt.getTime() + n * 24 * 60 * 60 * 1000);
+                            const dayNum = night.getDay();
+                            if(dayNum === 0 || dayNum === 5 || dayNum === 6) { 
+                                wkendN++;
+                            } else {
+                                wkdayN++;
+                            }
+                        }
+                        weekdayNights += wkdayN;
+                        weekendNights += wkendN;
+                        weekdayCont += Math.max(0, wkdayN - 1);
+                        weekendCont += Math.max(0, wkendN - 1);
+                    }
+                });
+
+                const tripPeriod = totalNights === 0 
+                    ? `${periodStrings.join(', ')} (1일)` 
+                    : `${periodStrings.join(', ')} (총 ${totalNights}박 ${totalDays}일)`;
+
+                sheet.getCell('B8').value = '출장일(기간)';
+                sheet.getCell('C8').value = tripPeriod;
+                
+                sheet.getCell('A9').value = '박수당';
+                sheet.getCell('B9').value = '평일';
+                sheet.getCell('C9').value = `( ${weekdayNights} 박 / 연속박수 ${weekdayCont} 박 )`;
+                sheet.getCell('B10').value = '휴일';
+                sheet.getCell('C10').value = `( ${weekendNights} 박 / 연속박수 ${weekendCont} 박 )`;
+            }
+
+            // 출장목적 기입
+            sheet.getCell('B14').value = '출장목적';
+            sheet.getCell('B14').font = { bold: true };
+            purposes.forEach((p, idx) => {
+                const rowNum = 14 + idx;
+                sheet.getCell(`C${rowNum}`).value = p;
+                sheet.mergeCells(`C${rowNum}:H${rowNum}`);
+            });
+
+            // 표 헤더
+            const headers = ['No', '일자', '유대', '통행료,주차', '차비', '숙박비', '식대', '기타', '계'];
+            headers.forEach((h, idx) => {
+                const cell = sheet.getCell(24, idx + 1);
+                cell.value = h;
+                cell.font = { bold: true };
+                cell.alignment = { horizontal: 'center', vertical: 'middle' };
+                cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
+                cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+            });
+
+            // 데이터 기입
+            let currentRow = 25;
+            let totalAmount = 0;
+
+            extractedData.forEach((data, idx) => {
+                let dateStr = data.date;
+                try {
+                    const d = new Date(dateStr);
+                    if(!isNaN(d)) dateStr = `${d.getMonth()+1}/${d.getDate()}`;
+                } catch(e) {}
+
+                const amount = parseInt(String(data.amount).replace(/,/g, '').replace('원', '')) || 0;
+                totalAmount += amount;
+
+                sheet.getCell(currentRow, 1).value = idx + 1;
+                sheet.getCell(currentRow, 2).value = dateStr;
+                sheet.getCell(currentRow, 9).value = amount;
+
+                const cat = data.category;
+                if (cat === "유대") sheet.getCell(currentRow, 3).value = amount;
+                else if (["통행료,주차", "통행료", "주차"].includes(cat)) sheet.getCell(currentRow, 4).value = amount;
+                else if (cat === "차비") sheet.getCell(currentRow, 5).value = amount;
+                else if (cat === "숙박비") sheet.getCell(currentRow, 6).value = amount;
+                else if (cat === "식대") sheet.getCell(currentRow, 7).value = amount;
+                else sheet.getCell(currentRow, 8).value = amount;
+
+                for(let c=1; c<=9; c++) {
+                    const cell = sheet.getCell(currentRow, c);
+                    cell.border = { top: {style:'thin'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+                    cell.alignment = (c==1 || c==2) ? { horizontal: 'center' } : { horizontal: 'right' };
+                    if(c==9) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFE0' } };
+                }
+                currentRow++;
+            });
+
+            // 합계
+            sheet.getCell(currentRow, 2).value = '합계';
+            sheet.getCell(currentRow, 2).font = { bold: true };
+            sheet.getCell(currentRow, 2).alignment = { horizontal: 'center' };
+            sheet.getCell(currentRow, 9).value = totalAmount;
+            sheet.getCell(currentRow, 9).font = { bold: true };
+            for(let c=1; c<=9; c++) {
+                sheet.getCell(currentRow, c).border = { top: {style:'double'}, left: {style:'thin'}, bottom: {style:'thin'}, right: {style:'thin'} };
+            }
+
+            // 파일 생성 및 공유/다운로드 처리
+            const yyyymmdd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`;
+            const fileName = `국내출장경비정산서_${els.author.value.trim()}_${yyyymmdd}.xlsx`;
+            
+            const buffer = await workbook.xlsx.writeBuffer();
+            const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+            
+            // 모바일 네이티브 공유하기
+            const file = new File([blob], fileName, { type: blob.type });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                try {
+                    await navigator.share({
+                        files: [file],
+                        title: '경비정산서',
+                        text: `${els.author.value}님의 출장경비 정산서입니다.`
+                    });
+                    addLog('🎉 파일 공유창을 성공적으로 띄웠습니다!');
+                } catch (err) {
+                    if (err.name !== 'AbortError') {
+                        addLog('공유 중 오류가 발생하여 파일로 다운로드합니다.', true);
+                        saveAs(blob, fileName);
+                    }
+                }
+            } else {
+                addLog('공유 기능을 지원하지 않는 브라우저입니다. 바로 다운로드합니다.');
+                saveAs(blob, fileName);
+                showAlert('완료', '엑셀 파일이 기기에 다운로드 되었습니다!');
+            }
+        }
+
+        // Main Process
+        els.startBtn.addEventListener('click', async () => {
+            if (document.getElementById('partner').value.trim()) els.addPurposeBtn.click();
+
+            const apiKey = els.apiKey.value.trim();
+            if (!apiKey) return showAlert('경고', 'API 키를 입력해주세요.');
+            if (selectedFiles.length === 0) return showAlert('경고', '영수증 사진을 먼저 찍거나 선택해주세요.');
+
+            saveConfig(); 
+
+            els.startBtn.disabled = true;
+            els.startBtn.innerText = '⏳ 정산 및 엑셀 생성 중...';
+            
+            let allExtractedData = [];
+
+            try {
+                addLog('\n--- 영수증 분석을 시작합니다 ---');
+                
+                for (let i = 0; i < selectedFiles.length; i++) {
+                    const fileObj = selectedFiles[i];
+                    addLog(`[${i+1}/${selectedFiles.length}] 분석 중: ${fileObj.name}`);
+                    
+                    try {
+                        const dataArray = await analyzeReceipt(fileObj.base64, fileObj.type, apiKey);
+                        addLog(`  └ 📄 영수증 ${dataArray.length}건 발견!`);
+                        
+                        dataArray.forEach(item => {
+                            allExtractedData.push(item);
+                            addLog(`    - ${item.date} | ${item.merchant} | ${item.category} | ${item.amount}원`);
+                        });
+                    } catch (apiErr) {
+                        const errMsg = apiErr.message.toLowerCase();
+                        if (errMsg.includes('quota') || errMsg.includes('429')) {
+                            addLog(`[안내] API 한도 초과! 작업을 멈추고 저장을 시작합니다.`, true);
+                            showAlert('API 한도 초과', '이용 한도가 초과되어 지금까지 분석된 영수증까지만 저장됩니다.');
+                            break;
+                        } else if (errMsg.includes('key')) {
+                            throw new Error('API 키가 올바르지 않습니다.');
+                        } else {
+                            addLog(`  └ 오류: ${apiErr.message}`, true);
+                        }
+                    }
+
+                    if (i < selectedFiles.length - 1) {
+                        addLog(`  ⏳ API 보호를 위해 4초 대기...`);
+                        await new Promise(resolve => setTimeout(resolve, 4000));
+                    }
+                }
+
+                addLog('\n--- 분석 완료. 엑셀을 생성하고 공유를 준비합니다 ---');
+                
+                if (allExtractedData.length === 0) {
+                    addLog('저장할 데이터가 없어 종료합니다.', true);
+                } else {
+                    allExtractedData.sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999'));
+                    await generateAndShareExcel(allExtractedData);
+                    
+                    // 성공적으로 모든 처리가 끝난 뒤, 다음 출장을 위해 쌓여있던 영수증 목록 비우기
+                    selectedFiles = [];
+                    await localforage.removeItem('receipt_images');
+                    updateFileUI();
+                    addLog('\n✨ 정산 완료! 다음 출장을 위해 저장된 영수증 목록을 자동으로 비웠습니다.');
+                }
+
+            } catch (error) {
+                addLog(`[치명적 오류] ${error.message}`, true);
+                showAlert('오류 발생', error.message);
+            } finally {
+                els.startBtn.disabled = false;
+                els.startBtn.innerText = '🚀 정산 생성 및 공유하기';
+            }
+        });
+    </script>
+</body>
+</html>
