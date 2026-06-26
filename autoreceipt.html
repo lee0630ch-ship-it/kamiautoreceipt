@@ -107,7 +107,8 @@
                     </div>
                     <button id="addPurposeBtn" class="w-full bg-gray-200 text-gray-700 py-2 rounded-lg font-semibold active:bg-gray-300 transition">➕ 추가하기</button>
                 </div>
-                <ul id="purposeList" class="mt-3 text-sm text-gray-600 bg-white border rounded-lg p-2 min-h-[40px] empty:hidden divide-y"></ul>
+                <!-- 출장 목적 목록 표시 -->
+                <ul id="purposeList" class="mt-3 text-sm text-gray-600 bg-white border rounded-lg min-h-[40px] empty:hidden"></ul>
             </section>
 
             <!-- 5. 로그 영역 -->
@@ -147,8 +148,8 @@
 
     <script>
         // State
-        const purposes = [];
-        let analyzedReceipts = []; // 이미 분석이 끝난 영수증 데이터 객체 배열
+        let purposes = []; // const에서 let으로 변경
+        let analyzedReceipts = []; 
 
         // Elements
         const els = {
@@ -175,10 +176,18 @@
         // Init
         window.onload = async () => {
             const saved = JSON.parse(localStorage.getItem('receipt_app_config') || '{}');
+            
+            // 텍스트 정보 불러오기
             if (saved.apiKey) els.apiKey.value = saved.apiKey;
             if (saved.author) els.author.value = saved.author;
             if (saved.traveler) els.traveler.value = saved.traveler;
             if (saved.vehicle) els.vehicle.value = saved.vehicle;
+            
+            // 출장 목적 리스트 불러오기
+            if (saved.purposes && Array.isArray(saved.purposes)) {
+                purposes = saved.purposes;
+                updatePurposeUI();
+            }
 
             localforage.config({ name: 'ReceiptAppDB', storeName: 'saved_receipts' });
 
@@ -188,19 +197,26 @@
                 if (stored && stored.length > 0) {
                     analyzedReceipts = stored;
                     updateReceiptUI();
-                    addLog(`[복구] 저장된 분석 데이터 ${analyzedReceipts.length}건을 불러왔습니다.`);
+                    addLog(`[복구] 저장된 데이터(글자, 목적, 영수증)를 완벽하게 불러왔습니다.`);
                 }
             } catch (err) {
                 console.error(err);
             }
+
+            // [신규] 실시간 자동 저장 이벤트 (글자를 치는 즉시 저장됨)
+            [els.apiKey, els.author, els.traveler, els.vehicle].forEach(input => {
+                input.addEventListener('input', saveConfig);
+            });
         };
 
+        // 정보 저장 함수 (목적 리스트도 함께 저장)
         function saveConfig() {
             localStorage.setItem('receipt_app_config', JSON.stringify({
                 apiKey: els.apiKey.value.trim(),
                 author: els.author.value.trim(),
                 traveler: els.traveler.value.trim(),
-                vehicle: els.vehicle.value.trim()
+                vehicle: els.vehicle.value.trim(),
+                purposes: purposes // 목적 배열도 저장
             }));
         }
 
@@ -297,13 +313,12 @@
             });
         });
 
-        // UI 업데이트
+        // 영수증 UI 업데이트
         function updateReceiptUI() {
             els.receiptCountBadge.innerText = `${analyzedReceipts.length}건 보관 중`;
             
             let html = '';
             analyzedReceipts.forEach((r, idx) => {
-                // 날짜 포맷 예쁘게
                 let displayDate = r.date;
                 try {
                     const d = new Date(r.date.replace(/\./g, '-'));
@@ -334,6 +349,30 @@
             addLog(`[안내] 영수증 데이터 1건이 삭제되었습니다.`);
         };
 
+        // 출장 목적 UI 업데이트 (삭제 버튼 포함)
+        function updatePurposeUI() {
+            els.purposeList.innerHTML = '';
+            purposes.forEach((p, idx) => {
+                const li = document.createElement('li');
+                li.className = 'p-2 text-gray-700 flex items-center justify-between gap-2 border-b last:border-b-0';
+                li.innerHTML = `
+                    <div class="flex items-start gap-2 truncate">
+                        <span class="bg-gray-100 px-1.5 py-0.5 rounded font-bold text-xs shrink-0">${p.category}</span> 
+                        <span class="truncate text-sm">${p.detail}</span>
+                    </div>
+                    <button onclick="removePurpose(${idx})" class="text-red-500 text-xs font-bold px-2 py-1 bg-red-50 rounded hover:bg-red-100 shrink-0">삭제</button>
+                `;
+                els.purposeList.appendChild(li);
+            });
+        }
+
+        // 출장 목적 개별 삭제
+        window.removePurpose = function(idx) {
+            purposes.splice(idx, 1);
+            updatePurposeUI();
+            saveConfig(); // 지울 때도 자동 저장
+        }
+
         // 출장 목적 추가
         els.addPurposeBtn.addEventListener('click', () => {
             const partner = document.getElementById('partner').value.trim();
@@ -346,16 +385,13 @@
 
             if (!partner && !company && !location && !equipment && !task) return;
 
-            // C열 내용 조합
             const detailStr = `${partner}/${company}/${location}/${equipment}/${paid}(${task})`;
             
             purposes.push({ detail: detailStr, category: category });
-            
-            const li = document.createElement('li');
-            li.className = 'py-1 text-gray-700 flex items-start gap-2';
-            li.innerHTML = `<span class="bg-gray-100 px-1 py-0.5 rounded font-bold text-xs shrink-0">${category}</span> <span>${detailStr}</span>`;
-            els.purposeList.appendChild(li);
+            updatePurposeUI();
+            saveConfig(); // 추가할 때 자동 저장
 
+            // 입력 칸 초기화
             ['partner', 'company', 'location', 'equipment', 'task'].forEach(id => document.getElementById(id).value = '');
             document.getElementById('paid').value = '무상';
         });
@@ -601,6 +637,9 @@
                 await localforage.removeItem('analyzed_receipts');
                 updateReceiptUI();
                 addLog('✨ 정산이 완료되어 영수증 보관함을 깔끔하게 비웠습니다.');
+
+                // 목적도 정산이 끝났으므로 비울지 유지할지는 선택사항이나,
+                // 다음 출장을 위해 남겨두는 게 보통 더 편리하므로 목적은 지우지 않습니다.
 
             } catch (err) {
                 addLog(`[오류] 엑셀 생성 중 오류: ${err.message}`, true);
