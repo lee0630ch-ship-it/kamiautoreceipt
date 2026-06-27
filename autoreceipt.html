@@ -203,7 +203,7 @@
                 console.error(err);
             }
 
-            // [신규] 실시간 자동 저장 이벤트 (글자를 치는 즉시 저장됨)
+            // 실시간 자동 저장 이벤트 (글자를 치는 즉시 저장됨)
             [els.apiKey, els.author, els.traveler, els.vehicle].forEach(input => {
                 input.addEventListener('input', saveConfig);
             });
@@ -430,7 +430,7 @@
         }
 
         // ==========================================
-        // 최종 엑셀 정산 생성 로직
+        // 최종 엑셀 정산 생성 로직 (★원본 양식 보존 및 덮어쓰기 로직 적용★)
         // ==========================================
         els.startBtn.addEventListener('click', async () => {
             if (document.getElementById('partner').value.trim()) els.addPurposeBtn.click();
@@ -492,29 +492,25 @@
             addLog('\n--- 엑셀 데이터 매핑을 시작합니다 ---');
 
             try {
-                const workbook = new ExcelJS.Workbook();
-                const sheet = workbook.addWorksheet('경비정산서');
+                // ★ 핵심 수정: 깃허브에 올라간 원본 엑셀 양식을 불러와서 덮어쓰기!
+                addLog('원본 엑셀 양식을 불러오는 중...');
+                const response = await fetch('./국내출장경비정산서(2022ver).xlsx');
+                if (!response.ok) {
+                    throw new Error("엑셀 원본 양식 파일을 찾을 수 없습니다. 깃허브에 '국내출장경비정산서(2022ver).xlsx' 파일이 업로드되어 있는지 확인해주세요.");
+                }
+                const bufferData = await response.arrayBuffer();
 
-                sheet.columns = [
-                    { width: 5 }, { width: 12 }, { width: 15 }, { width: 15 }, 
-                    { width: 15 }, { width: 15 }, { width: 15 }, { width: 15 }, 
-                    { width: 15 }, { width: 15 }, { width: 15 }
-                ];
+                const workbook = new ExcelJS.Workbook();
+                await workbook.xlsx.load(bufferData);
+                const sheet = workbook.worksheets[0]; // 첫 번째 시트
 
                 const today = new Date();
                 
-                sheet.getCell('C2').value = '국내출장경비 정산서';
-                sheet.getCell('C2').font = { size: 16, bold: true };
-                
-                sheet.getCell('I6').value = '작성일자';
-                sheet.getCell('J6').value = `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}`;
-
-                sheet.getCell('B6').value = '작성자';
+                // 파이썬 프로그램과 동일한 셀 위치에 덮어쓰기
+                sheet.getCell('H6').value = `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}`;
                 sheet.getCell('C6').value = els.author.value.trim();
-                sheet.getCell('B7').value = '출장인';
                 sheet.getCell('C7').value = els.traveler.value.trim();
-                sheet.getCell('H7').value = '이용차량';
-                sheet.getCell('I7').value = els.vehicle.value.trim();
+                sheet.getCell('H7').value = els.vehicle.value.trim();
 
                 // 기간 계산
                 let validDates = analyzedReceipts.map(r => new Date(r.date.replace(/\./g, '-')).getTime()).filter(t => !isNaN(t));
@@ -548,41 +544,66 @@
                         }
                     });
 
-                    sheet.getCell('B8').value = '출장일(기간)';
                     sheet.getCell('C8').value = totalNights === 0 ? `${periodStrings.join(', ')} (1일)` : `${periodStrings.join(', ')} (총 ${totalNights}박 ${totalDays}일)`;
-                    sheet.getCell('A9').value = '박수당';
-                    sheet.getCell('B9').value = '평일';
                     sheet.getCell('C9').value = `( ${wkdayN} 박 / 연속박수 ${wkdayC} 박 )`;
-                    sheet.getCell('B10').value = '휴일';
                     sheet.getCell('C10').value = `( ${wkendN} 박 / 연속박수 ${wkendC} 박 )`;
                 }
 
-                // 출장목적 (C열 내용, J열 구분)
-                sheet.getCell('B14').value = '출장목적';
-                sheet.getCell('B14').font = { bold: true };
+                // 동적 행 조절 로직 (출장 목적)
+                let currentStartRow = 25;
+                const PURPOSE_START_ROW = 14;
+                const PURPOSE_DEFAULT_ROWS = 7;
+                const purposeCount = purposes.length;
+
+                if (purposeCount > PURPOSE_DEFAULT_ROWS) {
+                    const insertAmount = purposeCount - PURPOSE_DEFAULT_ROWS;
+                    sheet.spliceRows(PURPOSE_START_ROW + 1, 0, ...Array(insertAmount).fill([]));
+                    for (let r = PURPOSE_START_ROW + 1; r <= PURPOSE_START_ROW + insertAmount; r++) {
+                        const sourceRow = sheet.getRow(PURPOSE_START_ROW);
+                        const targetRow = sheet.getRow(r);
+                        sourceRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                            targetRow.getCell(colNumber).style = cell.style;
+                        });
+                        targetRow.height = sourceRow.height;
+                    }
+                    currentStartRow += insertAmount;
+                } else if (purposeCount < PURPOSE_DEFAULT_ROWS) {
+                    const usedRows = Math.max(purposeCount, 1);
+                    for (let r = PURPOSE_START_ROW + usedRows; r < PURPOSE_START_ROW + PURPOSE_DEFAULT_ROWS; r++) {
+                        sheet.getRow(r).hidden = true;
+                    }
+                }
+
                 purposes.forEach((p, idx) => {
-                    const row = 14 + idx;
-                    sheet.getCell(`C${row}`).value = p.detail;
-                    sheet.mergeCells(`C${row}:H${row}`);
-                    sheet.getCell(`J${row}`).value = p.category; // 구분 J열
+                    sheet.getCell(PURPOSE_START_ROW + idx, 3).value = p.detail;  // C열
+                    sheet.getCell(PURPOSE_START_ROW + idx, 10).value = p.category; // J열
                 });
 
-                // 표 헤더
-                const headers = ['No', '일자', '유대', '통행료,주차', '차비', '숙박비', '식대', '기타', '계', '현금', '비고'];
-                headers.forEach((h, idx) => {
-                    const cell = sheet.getCell(24, idx + 1);
-                    cell.value = h;
-                    cell.font = { bold: true };
-                    cell.alignment = { horizontal: 'center' };
-                    cell.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
-                    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } };
-                });
+                // 동적 행 조절 로직 (영수증 내역)
+                const DEFAULT_ROWS = 30;
+                const dataCount = analyzedReceipts.length;
 
-                // 데이터 기입 (파이썬 매핑 완벽 복제)
-                let rIdx = 25, totalAmt = 0;
+                if (dataCount > DEFAULT_ROWS) {
+                    const insertAmount = dataCount - DEFAULT_ROWS;
+                    sheet.spliceRows(currentStartRow + 1, 0, ...Array(insertAmount).fill([]));
+                    for (let r = currentStartRow + 1; r <= currentStartRow + insertAmount; r++) {
+                        const sourceRow = sheet.getRow(currentStartRow);
+                        const targetRow = sheet.getRow(r);
+                        sourceRow.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                            targetRow.getCell(colNumber).style = cell.style;
+                        });
+                        targetRow.height = sourceRow.height;
+                    }
+                } else if (dataCount < DEFAULT_ROWS) {
+                    for (let r = currentStartRow + dataCount; r < currentStartRow + DEFAULT_ROWS; r++) {
+                        sheet.getRow(r).hidden = true;
+                    }
+                }
+
+                // 영수증 데이터 기입 (파이썬과 동일 매핑 적용)
+                let rIdx = currentStartRow;
                 analyzedReceipts.forEach((data, i) => {
                     const amt = parseInt(String(data.amount).replace(/,/g, '').replace('원', '')) || 0;
-                    totalAmt += amt;
                     const cat = data.category;
 
                     sheet.getCell(rIdx, 1).value = i + 1;           // A: No
@@ -601,21 +622,10 @@
                     else if (cat === "식대") sheet.getCell(rIdx, 7).value = amt; // G
                     else sheet.getCell(rIdx, 8).value = amt; // H: 기타
 
-                    for(let c=1; c<=11; c++) {
-                        const cell = sheet.getCell(rIdx, c);
-                        cell.border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
-                        if(c===9) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFFFE0' } };
-                    }
                     rIdx++;
                 });
 
-                // 합계 행
-                sheet.getCell(rIdx, 2).value = '합계';
-                sheet.getCell(rIdx, 2).font = { bold: true };
-                sheet.getCell(rIdx, 9).value = totalAmt;
-                sheet.getCell(rIdx, 9).font = { bold: true };
-
-                // 저장 및 초기화
+                // 저장 및 공유 처리
                 const fileName = `국내출장경비정산서_${els.author.value.trim()}_${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}.xlsx`;
                 const buffer = await workbook.xlsx.writeBuffer();
                 const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -632,14 +642,11 @@
                     showAlert('완료', '엑셀 파일이 기기에 다운로드 되었습니다!');
                 }
 
-                // 분석 완료 후 데이터베이스 초기화
+                // 분석 완료 후 영수증 목록만 초기화 (다음 출장 준비)
                 analyzedReceipts = [];
                 await localforage.removeItem('analyzed_receipts');
                 updateReceiptUI();
                 addLog('✨ 정산이 완료되어 영수증 보관함을 깔끔하게 비웠습니다.');
-
-                // 목적도 정산이 끝났으므로 비울지 유지할지는 선택사항이나,
-                // 다음 출장을 위해 남겨두는 게 보통 더 편리하므로 목적은 지우지 않습니다.
 
             } catch (err) {
                 addLog(`[오류] 엑셀 생성 중 오류: ${err.message}`, true);
