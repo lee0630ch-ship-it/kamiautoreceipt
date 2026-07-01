@@ -245,7 +245,7 @@
             });
         }
 
-        // 즉시 분석 로직 (3가지 업로드 버튼 모두 연동)
+        // 즉시 분석 로직
         const uploaderInputs = document.querySelectorAll('.file-uploader');
         
         uploaderInputs.forEach(input => {
@@ -513,10 +513,24 @@
                 let bufferData;
                 try {
                     addLog('웹에서 원본 엑셀 양식을 불러오는 중...');
-                    // 핵심 해결 코드: 파일명 끝에 현재 시간을 붙여서 브라우저가 과거 캐시를 쓰지 못하게 강제함
-                    const cacheBuster = new Date().getTime();
-                    const response = await fetch(`template.xlsx?v=${cacheBuster}`);
                     
+                    // ★ 스마트 경로 계산 핵심 로직: 주소창 끝에 슬래시가 빠져있어도 무조건 완벽한 절대 경로를 찾아냄
+                    const cacheBuster = new Date().getTime();
+                    let basePath = window.location.pathname;
+                    
+                    // index.html 같은 파일명이 주소창에 있으면 떼어내고 폴더 주소만 확보
+                    if (basePath.includes('.html')) {
+                        basePath = basePath.substring(0, basePath.lastIndexOf('/'));
+                    } 
+                    // 끝에 / 가 붙어있으면 떼어내기 (통일성)
+                    else if (basePath.endsWith('/')) {
+                        basePath = basePath.slice(0, -1);
+                    }
+                    
+                    // 완벽한 절대 주소 조합 (예: https://id.github.io/repo/template.xlsx?v=시간)
+                    const fileUrl = window.location.origin + basePath + '/template.xlsx?v=' + cacheBuster;
+                    
+                    const response = await fetch(fileUrl);
                     if (!response.ok) throw new Error("Not Found");
                     bufferData = await response.arrayBuffer();
                 } catch (fetchErr) {
